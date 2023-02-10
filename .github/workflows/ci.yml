@@ -1,0 +1,68 @@
+name: Run Tests
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    name: Build application
+    runs-on: ubuntu-latest
+    env:
+      DB_CONNECTION: sqlite
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php-versions: ['8.1']
+
+    steps:
+      - name: Install Prerequisites
+        run: |
+          mkdir -p ~/phpunit
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2 #https://github.com/shivammathur/setup-php
+        with:
+          php-version: ${{ matrix.php-versions }}
+          ini-values: log_errors=On, error_reporting=E_ALL, error_log=~/phpunit/php_errors.log, date.timezone=UTC, memory_limit=-1, max_execution_time=-1, display_errors=On, display_startup_errors=On
+          extensions: dom, curl, libxml, bcmath, mbstring, zip, pcntl, intl, exif, pdo_mysql, redis
+          tools: composer:v2
+          coverage: pcov
+
+      - name: Get composer cache directory
+        id: composer-cache
+        run: echo "::set-output name=dir::$(composer config cache-files-dir)"
+
+      - name: Cache dependencies
+        uses: actions/cache@v2
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install Composer dependencies
+        working-directory: ./backend
+        run: composer install --no-progress --prefer-dist --optimize-autoloader
+
+      - name: Execute lint with Laravel Pint
+        working-directory: ./backend
+        run: ./vendor/bin/pint --test
+
+      - name: Create SQLite database file
+        working-directory: ./backend
+        run: touch database/database.sqlite
+
+      - name: Migrate and Seed DB
+        working-directory: ./backend
+        run: php artisan migrate:fresh --seed --env=testing
+
+      - name: Generate Data
+        working-directory: ./backend
+        run: php artisan generate:guests
+
+      - name: Execute Tests
+        working-directory: ./backend
+        run: php artisan test
